@@ -1,28 +1,32 @@
+import os
 import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, Tuple, Optional
 import re
 
-from telegram import Update, ChatPermissions, Chat
+from telegram import Update, ChatPermissions
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     filters,
     CallbackContext,
-    ConversationHandler,
 )
-from telegram.constants import ChatType
+from telegram.request import HTTPXRequest
 
 # ========== КОНФИГУРАЦИЯ ==========
-TOKEN = "ВАШ_TELEGRAM_BOT_TOKEN"
-OWNER_IDS = [123456789]  # ID владельца (можно несколько)
+TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "ВАШ_TELEGRAM_BOT_TOKEN")
+PORT = int(os.environ.get("PORT", 8080))
+OWNER_IDS = [int(id) for id in os.environ.get("OWNER_IDS", "").split(",") if id]  # Формат: "123456789,987654321"
+
+if not OWNER_IDS:
+    OWNER_IDS = [123456789]  # Заглушка для тестов
 
 # Хранилище данных (в продакшене замените на БД)
-user_ranks: Dict[int, Dict[int, int]] = {}  # {chat_id: {user_id: rank}}
-user_warns: Dict[int, Dict[int, int]] = {}  # {chat_id: {user_id: warns}}
-muted_users: Dict[int, Dict[int, datetime]] = {}  # {chat_id: {user_id: unmute_time}}
-chat_locked: Dict[int, bool] = {}  # {chat_id: is_locked}
+user_ranks: Dict[int, Dict[int, int]] = {}
+user_warns: Dict[int, Dict[int, int]] = {}
+muted_users: Dict[int, Dict[int, datetime]] = {}
+chat_locked: Dict[int, bool] = {}
 
 # Ранги
 RANK_USER = 0
@@ -83,7 +87,6 @@ def is_moderator(user_id: int, chat_id: int) -> bool:
     return RANK_MODER_MIN <= rank <= RANK_MODER_MAX or rank == RANK_ADMIN or user_id in OWNER_IDS
 
 def parse_time(time_str: str) -> Optional[timedelta]:
-    """Парсит время: 5м, 2ч, 3д, 1н, 1г"""
     match = re.match(r'(\d+)([мчднг])', time_str.lower())
     if not match:
         return None
@@ -105,7 +108,6 @@ def parse_time(time_str: str) -> Optional[timedelta]:
 
 # ========== ПРОВЕРКА ПРАВ ==========
 async def check_moderator(update: Update, context: CallbackContext) -> bool:
-    """Проверяет, является ли пользователь модератором/админом"""
     if not update.effective_chat or not update.effective_user:
         return False
     
@@ -118,7 +120,6 @@ async def check_moderator(update: Update, context: CallbackContext) -> bool:
     return True
 
 async def check_admin(update: Update, context: CallbackContext) -> bool:
-    """Проверяет, является ли пользователь администратором"""
     if not update.effective_chat or not update.effective_user:
         return False
     
@@ -131,7 +132,6 @@ async def check_admin(update: Update, context: CallbackContext) -> bool:
     return True
 
 async def check_owner(update: Update, context: CallbackContext) -> bool:
-    """Проверяет, является ли пользователь владельцем"""
     if not update.effective_user:
         return False
     
@@ -141,14 +141,12 @@ async def check_owner(update: Update, context: CallbackContext) -> bool:
     return True
 
 def get_replied_user(update: Update) -> Optional[int]:
-    """Получает ID пользователя, на чье сообщение ответили"""
     if not update.message or not update.message.reply_to_message:
         return None
     return update.message.reply_to_message.from_user.id
 
 # ========== КОМАНДЫ МОДЕРАЦИИ ==========
 async def cmd_mute(update: Update, context: CallbackContext):
-    """Мут пользователя: мут 5м"""
     if not await check_moderator(update, context):
         return
     
@@ -161,10 +159,8 @@ async def cmd_mute(update: Update, context: CallbackContext):
         return
     
     target_id = get_replied_user(update)
-    admin_id = update.effective_user.id
     chat_id = update.effective_chat.id
     
-    # Проверка на мута админа/владельца
     if is_admin_or_owner(target_id, chat_id):
         await update.message.reply_text("❌ Нельзя замутить администратора или владельца.")
         return
@@ -177,7 +173,6 @@ async def cmd_mute(update: Update, context: CallbackContext):
     until = datetime.now() + time_delta
     
     try:
-        # Ограничиваем права (can_send_messages = False)
         await update.effective_chat.restrict_member(
             user_id=target_id,
             permissions=ChatPermissions(
@@ -191,10 +186,8 @@ async def cmd_mute(update: Update, context: CallbackContext):
         
         mute_user(chat_id, target_id, until)
         
-        # Форматируем время для вывода
-        time_str = context.args[0]
         await update.message.reply_text(
-            f"🔇 Пользователь замучен на {time_str}\n"
+            f"🔇 Пользователь замучен на {context.args[0]}\n"
             f"Размут: {until.strftime('%d.%m.%Y %H:%M')}"
         )
         
@@ -202,7 +195,6 @@ async def cmd_mute(update: Update, context: CallbackContext):
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
 async def cmd_unmute(update: Update, context: CallbackContext):
-    """Размут пользователя"""
     if not await check_moderator(update, context):
         return
     
@@ -214,7 +206,6 @@ async def cmd_unmute(update: Update, context: CallbackContext):
     chat_id = update.effective_chat.id
     
     try:
-        # Восстанавливаем права
         await update.effective_chat.restrict_member(
             user_id=target_id,
             permissions=ChatPermissions(
@@ -232,7 +223,6 @@ async def cmd_unmute(update: Update, context: CallbackContext):
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
 async def cmd_ban(update: Update, context: CallbackContext):
-    """Бан пользователя"""
     if not await check_moderator(update, context):
         return
     
@@ -254,7 +244,6 @@ async def cmd_ban(update: Update, context: CallbackContext):
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
 async def cmd_unban(update: Update, context: CallbackContext):
-    """Разбан по ID"""
     if not await check_moderator(update, context):
         return
     
@@ -274,7 +263,6 @@ async def cmd_unban(update: Update, context: CallbackContext):
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
 async def cmd_warn(update: Update, context: CallbackContext):
-    """Выдать предупреждение (3 предупреждения = мут на 1 час)"""
     if not await check_moderator(update, context):
         return
     
@@ -286,7 +274,6 @@ async def cmd_warn(update: Update, context: CallbackContext):
     chat_id = update.effective_chat.id
     admin_name = update.effective_user.first_name
     
-    # Нельзя выдавать варны админам
     if is_admin_or_owner(target_id, chat_id):
         await update.message.reply_text("❌ Нельзя выдавать предупреждения администратору.")
         return
@@ -298,7 +285,6 @@ async def cmd_warn(update: Update, context: CallbackContext):
         f"Выдал: {admin_name}"
     )
     
-    # Если 3 предупреждения — мут на 1 час
     if warns_count >= 3:
         until = datetime.now() + timedelta(hours=1)
         
@@ -310,7 +296,7 @@ async def cmd_warn(update: Update, context: CallbackContext):
             )
             
             mute_user(chat_id, target_id, until)
-            clear_warns(chat_id, target_id)  # Очищаем варны после мута
+            clear_warns(chat_id, target_id)
             
             await update.message.reply_text(
                 f"🔇 Пользователь автоматически замучен на 1 час (3 предупреждения)"
@@ -319,7 +305,6 @@ async def cmd_warn(update: Update, context: CallbackContext):
             await update.message.reply_text(f"❌ Ошибка при автоматическом муте: {str(e)}")
 
 async def cmd_clear(update: Update, context: CallbackContext):
-    """Очистка чата: очисти 10"""
     if not await check_moderator(update, context):
         return
     
@@ -336,20 +321,20 @@ async def cmd_clear(update: Update, context: CallbackContext):
         chat_id = update.effective_chat.id
         message_id = update.message.message_id
         
-        # Удаляем сообщения (бот должен быть администратором)
+        deleted = 0
         for i in range(min(count, 100)):
             try:
                 await update.effective_chat.delete_message(message_id - i)
+                deleted += 1
             except:
                 pass
         
-        await update.message.reply_text(f"🧹 Очищено {count} сообщений.")
+        await update.message.reply_text(f"🧹 Удалено {deleted} сообщений.")
         
     except ValueError:
         await update.message.reply_text("❌ Укажите число.")
 
 async def cmd_lock_chat(update: Update, context: CallbackContext):
-    """Закрыть чат (-чат)"""
     if not await check_moderator(update, context):
         return
     
@@ -357,7 +342,6 @@ async def cmd_lock_chat(update: Update, context: CallbackContext):
     chat_locked[chat_id] = True
     
     try:
-        # Ограничиваем всех пользователей
         await update.effective_chat.set_permissions(
             permissions=ChatPermissions(can_send_messages=False)
         )
@@ -366,7 +350,6 @@ async def cmd_lock_chat(update: Update, context: CallbackContext):
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
 async def cmd_unlock_chat(update: Update, context: CallbackContext):
-    """Открыть чат (+чат)"""
     if not await check_moderator(update, context):
         return
     
@@ -388,7 +371,6 @@ async def cmd_unlock_chat(update: Update, context: CallbackContext):
 
 # ========== НАЗНАЧЕНИЕ РОЛЕЙ ==========
 async def cmd_add_moder(update: Update, context: CallbackContext):
-    """Назначить модератора: +модер 3 (ответом)"""
     if not await check_moderator(update, context):
         return
     
@@ -411,8 +393,7 @@ async def cmd_add_moder(update: Update, context: CallbackContext):
         admin_id = update.effective_user.id
         admin_rank = get_user_rank(chat_id, admin_id)
         
-        # Проверка прав: модер 5 уровня может назначать модеров 1-4 уровня
-        if admin_rank == RANK_MODER_MAX:  # 5 уровень
+        if admin_rank == RANK_MODER_MAX:
             if level >= RANK_MODER_MAX:
                 await update.message.reply_text("❌ Вы не можете назначать модераторов 5 уровня.")
                 return
@@ -422,7 +403,6 @@ async def cmd_add_moder(update: Update, context: CallbackContext):
         
         set_user_rank(chat_id, target_id, level)
         
-        # Добавляем пометку в чате (опционально)
         try:
             await update.effective_chat.promote_member(
                 user_id=target_id,
@@ -439,7 +419,6 @@ async def cmd_add_moder(update: Update, context: CallbackContext):
         await update.message.reply_text("❌ Уровень должен быть числом.")
 
 async def cmd_remove_moder(update: Update, context: CallbackContext):
-    """Снять модератора: -модер (ответом)"""
     if not await check_moderator(update, context):
         return
     
@@ -458,7 +437,6 @@ async def cmd_remove_moder(update: Update, context: CallbackContext):
     
     remove_user_rank(chat_id, target_id)
     
-    # Убираем права в чате
     try:
         await update.effective_chat.promote_member(
             user_id=target_id,
@@ -472,7 +450,6 @@ async def cmd_remove_moder(update: Update, context: CallbackContext):
     await update.message.reply_text("✅ Модераторские права сняты.")
 
 async def cmd_add_admin(update: Update, context: CallbackContext):
-    """Назначить администратора: +админ (ответом) - только владелец"""
     if not await check_owner(update, context):
         return
     
@@ -485,7 +462,6 @@ async def cmd_add_admin(update: Update, context: CallbackContext):
     
     set_user_rank(chat_id, target_id, RANK_ADMIN)
     
-    # Даём полные права в чате
     try:
         await update.effective_chat.promote_member(
             user_id=target_id,
@@ -502,7 +478,6 @@ async def cmd_add_admin(update: Update, context: CallbackContext):
     await update.message.reply_text("✅ Пользователь назначен администратором.")
 
 async def cmd_remove_admin(update: Update, context: CallbackContext):
-    """Снять администратора: -админ (ответом) - только владелец"""
     if not await check_owner(update, context):
         return
     
@@ -532,7 +507,6 @@ async def cmd_remove_admin(update: Update, context: CallbackContext):
 
 # ========== ПРОСМОТР ИНФОРМАЦИИ ==========
 async def cmd_moder_list(update: Update, context: CallbackContext):
-    """Список всех модераторов и админов"""
     if not await check_moderator(update, context):
         return
     
@@ -565,7 +539,6 @@ async def cmd_moder_list(update: Update, context: CallbackContext):
     await update.message.reply_text(text, parse_mode='Markdown')
 
 async def cmd_my_rank(update: Update, context: CallbackContext):
-    """Мой ранг"""
     if not update.effective_chat or not update.effective_user:
         return
     
@@ -586,21 +559,13 @@ async def cmd_my_rank(update: Update, context: CallbackContext):
     await update.message.reply_text(f"📊 Ваш ранг: **{rank_text}**", parse_mode='Markdown')
 
 async def cmd_info(update: Update, context: CallbackContext):
-    """Информация о пользователе"""
     if not await check_moderator(update, context):
         return
     
     target = None
     if update.message.reply_to_message:
         target = update.message.reply_to_message.from_user
-    elif context.args:
-        try:
-            # Пытаемся получить пользователя по ID
-            pass
-        except:
-            pass
-    
-    if not target:
+    else:
         target = update.effective_user
     
     user_id = target.id
@@ -634,22 +599,18 @@ async def cmd_info(update: Update, context: CallbackContext):
 
 # ========== ФИЛЬТР СООБЩЕНИЙ ДЛЯ ЗАКРЫТОГО ЧАТА ==========
 async def filter_locked_chat(update: Update, context: CallbackContext):
-    """Проверяем, может ли пользователь писать в закрытом чате"""
     if not update.message or not update.effective_chat or not update.effective_user:
         return
     
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
     
-    # Если чат не закрыт - пропускаем
     if not chat_locked.get(chat_id, False):
         return
     
-    # Модераторы, админы и владелец могут писать
     if is_moderator(user_id, chat_id):
         return
     
-    # Остальные - удаляем сообщение
     try:
         await update.message.delete()
         await update.message.reply_text(
@@ -661,34 +622,51 @@ async def filter_locked_chat(update: Update, context: CallbackContext):
 
 # ========== ЗАПУСК БОТА ==========
 def main():
-    app = Application.builder().token(TOKEN).build()
+    # Создаем приложение с настройками для Webhook
+    application = Application.builder().token(TOKEN).build()
     
     # Команды модерации
-    app.add_handler(CommandHandler("мут", cmd_mute))
-    app.add_handler(CommandHandler("размут", cmd_unmute))
-    app.add_handler(CommandHandler("бан", cmd_ban))
-    app.add_handler(CommandHandler("разбан", cmd_unban))
-    app.add_handler(CommandHandler("варн", cmd_warn))
-    app.add_handler(CommandHandler("очисти", cmd_clear))
-    app.add_handler(CommandHandler("чат", cmd_lock_chat))  # -чат
-    app.add_handler(CommandHandler("чат", cmd_unlock_chat))  # +чат
+    application.add_handler(CommandHandler("мут", cmd_mute))
+    application.add_handler(CommandHandler("размут", cmd_unmute))
+    application.add_handler(CommandHandler("бан", cmd_ban))
+    application.add_handler(CommandHandler("разбан", cmd_unban))
+    application.add_handler(CommandHandler("варн", cmd_warn))
+    application.add_handler(CommandHandler("очисти", cmd_clear))
+    
+    # Отдельные обработчики для +чат и -чат
+    application.add_handler(MessageHandler(filters.Regex(r'^\-чат$'), cmd_lock_chat))
+    application.add_handler(MessageHandler(filters.Regex(r'^\+чат$'), cmd_unlock_chat))
     
     # Назначение ролей
-    app.add_handler(CommandHandler("модер", cmd_add_moder))  # +модер
-    app.add_handler(CommandHandler("модер", cmd_remove_moder))  # -модер
-    app.add_handler(CommandHandler("админ", cmd_add_admin))  # +админ
-    app.add_handler(CommandHandler("админ", cmd_remove_admin))  # -админ
+    application.add_handler(MessageHandler(filters.Regex(r'^\+модер\s+\d+$'), cmd_add_moder))
+    application.add_handler(MessageHandler(filters.Regex(r'^\-модер$'), cmd_remove_moder))
+    application.add_handler(MessageHandler(filters.Regex(r'^\+админ$'), cmd_add_admin))
+    application.add_handler(MessageHandler(filters.Regex(r'^\-админ$'), cmd_remove_admin))
     
     # Просмотр информации
-    app.add_handler(CommandHandler("кто", cmd_moder_list))  # /кто модеры
-    app.add_handler(CommandHandler("мой", cmd_my_rank))  # /мой ранг
-    app.add_handler(CommandHandler("инфо", cmd_info))
+    application.add_handler(CommandHandler("кто", cmd_moder_list))
+    application.add_handler(CommandHandler("мой", cmd_my_rank))
+    application.add_handler(CommandHandler("инфо", cmd_info))
     
-    # Фильтр для закрытого чата (должен быть перед обработкой обычных сообщений)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, filter_locked_chat), group=0)
+    # Фильтр для закрытого чата
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, filter_locked_chat), group=0)
     
-    print("Бот запущен...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Запуск через Webhook (для Render)
+    webhook_url = os.environ.get("RENDER_EXTERNAL_URL")
+    
+    if webhook_url:
+        # Режим Webhook (для продакшена)
+        webhook_path = f"/webhook/{TOKEN}"
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=webhook_path,
+            webhook_url=f"{webhook_url}{webhook_path}"
+        )
+    else:
+        # Режим Polling (для локальной разработки)
+        print("Запуск в режиме polling...")
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
