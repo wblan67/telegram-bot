@@ -1,368 +1,322 @@
+import os
 import asyncio
-import re
 from datetime import datetime, timedelta
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
-from aiogram import Bot, Dispatcher, F
-from aiogram.filters import Command
-from aiogram.types import Message, ChatPermissions
+from telegram import Update, ChatPermissions
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
+)
 
-# --- CONFIG ---
-BOT_TOKEN = "8944720190:AAEiEGzRnvHZtwaWepB0BLNCKIKRI4Io5WQ"
-OWNER_IDS = [6034090849]  # Replace with your Telegram ID
+# ========== CONFIG ==========
+BOT_TOKEN = os.getenv("8944720190:AAEiEGzRnvHZtwaWepB0BLNCKIKRI4Io5WQ")
+OWNER_IDS = [int(os.getenv("6034090849"))] if os.getenv("OWNER_ID") else []
 
-# Time units: 7m, 2h, 3d, 1w
-TIME_UNITS = {
-    "s": "seconds",
-    "m": "minutes", 
-    "h": "hours",
-    "d": "days",
-    "w": "weeks"
-}
-
-# Rank permissions (1-5)
-# 1 = Junior Mod, 2 = Mod, 3 = Senior Mod, 4 = Admin, 5 = Owner
-RANK_PERMS = {
-    1: {"warn": True, "mute": True, "ban": False, "kick": True, "promote": False, "demote": False},
-    2: {"warn": True, "mute": True, "ban": True, "kick": True, "promote": 1, "demote": False},
-    3: {"warn": True, "mute": True, "ban": True, "kick": True, "promote": 2, "demote": True},
-    4: {"warn": True, "mute": True, "ban": True, "kick": True, "promote": 3, "demote": True},
-    5: {"warn": True, "mute": True, "ban": True, "kick": True, "promote": 4, "demote": True, "full": True}
-}
-
-# Storage (use database for production)
+# User ranks (0=banned, 1=user, 5=moderator, 10=admin)
 user_ranks: Dict[int, int] = {}
-user_warns: Dict[int, list] = {}
-temp_mutes: Dict[int, datetime] = {}
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+# Mute timers
+mute_timers: Dict[int, datetime] = {}
 
-
-def parse_time(time_str: str) -> Optional[int]:
-    match = re.match(r"(\d+)([smhdw])", time_str.lower())
-    if not match:
-        return None
-    value = int(match.group(1))
-    unit = match.group(2)
-    if unit in TIME_UNITS:
-        seconds = value * {
-            "seconds": 1, "minutes": 60, "hours": 3600,
-            "days": 86400, "weeks": 604800
-        }.get(TIME_UNITS[unit], 0)
-        return seconds
-    return None
-
-
+# ========== HELPER FUNCTIONS ==========
 def get_rank(user_id: int) -> int:
-    return user_ranks.get(user_id, 0)
+    return user_ranks.get(user_id, 1)
 
+def set_rank(user_id: int, rank: int):
+    if rank < 0:
+        rank = 0
+    if rank > 10:
+        rank = 10
+    user_ranks[user_id] = rank
 
-def has_perm(mod_id: int, action: str, target_rank: int = 0) -> bool:
-    mod_rank = get_rank(mod_id)
-    if mod_rank >= 5 or mod_id in OWNER_IDS:
-        return True
+def has_permission(user_id: int, required_rank: int) -> bool:
+    return get_rank(user_id) >= required_rank
+
+def parse_time(time_str: str) -> Optional[timedelta]:
+    """Convert 5m, 2h, 1d to timedelta"""
+    if not time_str:
+        return None
+    unit = time_str[-1]
+    try:
+        value = int(time_str[:-1])
+    except ValueError:
+        return None
     
-    perms = RANK_PERMS.get(mod_rank, {})
-    
-    if action == "promote":
-        max_promote = perms.get("promote", False)
-        if isinstance(max_promote, int):
-            return target_rank <= max_promote
-        return False
-    if action == "demote":
-        return perms.get("demote", False) and mod_rank > target_rank
-    
-    return perms.get(action, False)
+    if unit == 'm':
+        return timedelta(minutes=value)
+    elif unit == 'h':
+        return timedelta(hours=value)
+    elif unit == 'd':
+        return timedelta(days=value)
+    else:
+        return None
 
-
-def can_mod(mod_id: int, target_id: int) -> Tuple[bool, str]:
-    mod_rank = get_rank(mod_id)
-    target_rank = get_rank(target_id)
-    
-    if target_id in OWNER_IDS and mod_id not in OWNER_IDS:
-        return False, "Cannot moderate owner!"
-    if mod_rank <= target_rank and mod_rank != 5:
-        return False, f"Cannot moderate rank {target_rank} (you have {mod_rank})"
-    return True, ""
-
-
-@dp.message(Command("start"))
-async def start_cmd(message: Message):
-    await message.answer(
-        "Moderation Bot Ready!\n\n"
-        "Commands:\n"
-        "!mute @user 7m - mute for 7 minutes\n"
-        "!ban @user 3d - ban for 3 days\n"
-        "!warn @user reason - warn user\n"
-        "!unmute @user - unmute\n"
-        "!unban user_id - unban\n"
-        "!setrank @user 3 - set rank (1-5)\n"
-        "!warns @user - show warns\n"
-        "!kick @user - kick\n"
-        "!clear N - delete N messages"
+# ========== COMMANDS ==========
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Welcome message"""
+    await update.message.reply_text(
+        "🤖 *Moderation Bot*\n\n"
+        "Available commands:\n"
+        "• /start - show this message\n"
+        "• /help - help\n"
+        "• /info - user info\n\n"
+        "*Moderation:*\n"
+        "• !mute @username 5m - mute user\n"
+        "• !unmute @username - unmute user\n"
+        "• !ban @username - ban user\n"
+        "• !unban @username - unban user\n"
+        "• !setrank @username 5 - set rank (5=moderator)\n"
+        "• !warn @username - warn user\n\n"
+        "*For moderators:*\n"
+        "• !clear 10 - clear messages",
+        parse_mode="Markdown"
     )
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Help message"""
+    await start(update, context)
 
-@dp.message(Command("mute"))
-async def mute_cmd(message: Message):
-    if not message.reply_to_message:
-        return await message.answer("Reply to a user message!")
+async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User info"""
+    user = update.effective_user
+    rank = get_rank(user.id)
     
-    mod_id = message.from_user.id
-    target = message.reply_to_message.from_user
-    args = message.text.split()
-    time_str = args[1] if len(args) > 1 else None
+    rank_names = {
+        0: "Banned",
+        1: "User",
+        5: "Moderator",
+        10: "Admin"
+    }
     
-    if not time_str:
-        return await message.answer("Specify time: !mute @user 10m")
+    await update.message.reply_text(
+        f"📋 *User Info*\n\n"
+        f"ID: {user.id}\n"
+        f"Name: {user.first_name}\n"
+        f"Rank: {rank_names.get(rank, 'User')}\n"
+        f"Level: {rank}",
+        parse_mode="Markdown"
+    )
+
+# ========== MODERATION ==========
+async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mute user !mute @username 5m"""
+    if not update.message.reply_to_message and not context.args:
+        await update.message.reply_text("❌ Reply to a message or specify user: !mute @username 5m", parse_mode="Markdown")
+        return
     
-    seconds = parse_time(time_str)
-    if not seconds:
-        return await message.answer("Invalid format. Examples: 10m, 2h, 3d, 1w")
-        allowed, err = can_mod(mod_id, target.id)
-    if not allowed:
-        return await message.answer(err)
+    caller_id = update.effective_user.id
+    if not has_permission(caller_id, 5):
+        await update.message.reply_text("❌ You don't have permission to mute")
+        return
     
-    if not has_perm(mod_id, "mute"):
-        return await message.answer("You don't have mute permission!")
+    if not update.message.reply_to_message:
+        await update.message.reply_text("⚠️ Reply to the user's message to mute them")
+        return
     
-    until_date = datetime.now() + timedelta(seconds=seconds)
+    target = update.message.reply_to_message.from_user
+    
+    time_str = context.args[-1] if context.args else None
+    duration = parse_time(time_str) if time_str else timedelta(minutes=5)
+    
+    if not duration:
+        await update.message.reply_text("❌ Invalid time format. Example: !mute @user 5m (m=minutes, h=hours, d=days)", parse_mode="Markdown")
+        return
     
     try:
-        await bot.restrict_chat_member(
-            message.chat.id,
-            target.id,
-            ChatPermissions(can_send_messages=False),
+        until_date = datetime.now() + duration
+        await update.message.chat.restrict_member(
+            user_id=target.id,
+            permissions=ChatPermissions(can_send_messages=False),
             until_date=until_date
         )
-        temp_mutes[target.id] = until_date
-        await message.answer(f"Muted {target.mention} for {time_str}")
+        
+        mute_timers[target.id] = until_date
+        
+        await update.message.reply_text(
+            f"🔇 User {target.first_name} muted for {time_str or '5 minutes'}\n"
+            f"Moderator: {update.effective_user.first_name}"
+        )
     except Exception as e:
-        await message.answer(f"Error: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
 
-
-@dp.message(Command("unmute"))
-async def unmute_cmd(message: Message):
-    if not message.reply_to_message:
-        return await message.answer("Reply to a user message!")
+async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Unmute user"""
+    if not update.message.reply_to_message:
+        await update.message.reply_text("❌ Reply to the user's message to unmute them")
+        return
     
-    mod_id = message.from_user.id
-    target = message.reply_to_message.from_user
+    caller_id = update.effective_user.id
+    if not has_permission(caller_id, 5):
+        await update.message.reply_text("❌ You don't have permission")
+        return
     
-    allowed, err = can_mod(mod_id, target.id)
-    if not allowed:
-        return await message.answer(err)
+    target = update.message.reply_to_message.from_user
     
     try:
-        await bot.restrict_chat_member(
-            message.chat.id,
-            target.id,
-            ChatPermissions(
+        await update.message.chat.restrict_member(
+            user_id=target.id,
+            permissions=ChatPermissions(
                 can_send_messages=True,
                 can_send_media_messages=True,
                 can_send_other_messages=True,
                 can_add_web_page_previews=True
             )
         )
-        temp_mutes.pop(target.id, None)
-        await message.answer(f"Unmuted {target.mention}")
+        
+        if target.id in mute_timers:
+            del mute_timers[target.id]
+        
+        await update.message.reply_text(f"🔊 User {target.first_name} unmuted")
     except Exception as e:
-        await message.answer(f"Error: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
 
-
-@dp.message(Command("ban"))
-async def ban_cmd(message: Message):
-    if not message.reply_to_message:
-        return await message.answer("Reply to a user message!")
+async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ban user"""
+    if not update.message.reply_to_message:
+        await update.message.reply_text("❌ Reply to the user's message to ban them")
+        return
     
-    mod_id = message.from_user.id
-    target = message.reply_to_message.from_user
-    args = message.text.split()
-    time_str = args[1] if len(args) > 1 else None
+    caller_id = update.effective_user.id
+    if not has_permission(caller_id, 5):
+        await update.message.reply_text("❌ You don't have permission")
+        return
     
-    if not has_perm(mod_id, "ban"):
-        return await message.answer("You don't have ban permission!")
-    
-    allowed, err = can_mod(mod_id, target.id)
-    if not allowed:
-        return await message.answer(err)
-    
-    until_date = None
-    if time_str:
-        seconds = parse_time(time_str)
-        if seconds:
-            until_date = datetime.now() + timedelta(seconds=seconds)
+    target = update.message.reply_to_message.from_user
     
     try:
-        await bot.ban_chat_member(message.chat.id, target.id, until_date=until_date)
-        msg = f"Banned {target.mention}"
-        if until_date:
-            msg += f" for {time_str}"
-        await message.answer(msg)
+        await update.message.chat.ban_member(user_id=target.id)
+        set_rank(target.id, 0)
+        await update.message.reply_text(f"⛔ User {target.first_name} banned")
     except Exception as e:
-        await message.answer(f"Error: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
 
-
-@dp.message(Command("unban"))
-async def unban_cmd(message: Message):
-    args = message.text.split()
-    if len(args) < 2:
-        return await message.answer("Usage: !unban user_id")
+async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Unban user"""
+    if not context.args:
+        await update.message.reply_text("❌ Specify user ID: !unban 123456789", parse_mode="Markdown")
+        return
     
-    mod_id = message.from_user.id
-    user_id = int(args[1])
-    
-    if not has_perm(mod_id, "ban"):
-        return await message.answer("You don't have unban permission!")
+    caller_id = update.effective_user.id
+    if not has_permission(caller_id, 5):
+        await update.message.reply_text("❌ You don't have permission")
+        return
     
     try:
-        await bot.unban_chat_member(message.chat.id, user_id)
-        await message.answer(f"Unbanned user {user_id}")
+        user_id = int(context.args[0])
+        await update.message.chat.unban_member(user_id=user_id)
+        set_rank(user_id, 1)
+        await update.message.reply_text(f"✅ User {user_id} unbanned")
     except Exception as e:
-        await message.answer(f"Error: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
 
-
-@dp.message(Command("kick"))
-async def kick_cmd(message: Message):
-    if not message.reply_to_message:
-        return await message.answer("Reply to a user message!")
+async def setrank(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set user rank !setrank @username 5"""
+    if not update.message.reply_to_message:
+        await update.message.reply_text("❌ Reply to the user's message")
+        return
     
-    mod_id = message.from_user.id
-    target = message.reply_to_message.from_user
+    if not context.args:
+        await update.message.reply_text("❌ Specify rank: !setrank 5 (1-10)", parse_mode="Markdown")
+        return
     
-    if not has_perm(mod_id, "kick"):
-        return await message.answer("You don't have kick permission!")
-    
-    allowed, err = can_mod(mod_id, target.id)
-    if not allowed:
-        return await message.answer(err)
+    caller_id = update.effective_user.id
+    if not has_permission(caller_id, 10):
+        await update.message.reply_text("❌ Only admins can change ranks")
+        return
     
     try:
-        await bot.ban_chat_member(message.chat.id, target.id)
-        await bot.unban_chat_member(message.chat.id, target.id)
-        await message.answer(f"Kicked {target.mention}")
-    except Exception as e:
-        await message.answer(f"Error: {e}")
-        @dp.message(Command("warn"))
-async def warn_cmd(message: Message):
-    if not message.reply_to_message:
-        return await message.answer("Reply to a user message!")
-    
-    mod_id = message.from_user.id
-    target = message.reply_to_message.from_user
-    reason = " ".join(message.text.split()[1:]) if len(message.text.split()) > 1 else "No reason"
-    
-    if not has_perm(mod_id, "warn"):
-        return await message.answer("You don't have warn permission!")
-    
-    allowed, err = can_mod(mod_id, target.id)
-    if not allowed:
-        return await message.answer(err)
-    
-    if target.id not in user_warns:
-        user_warns[target.id] = []
-    
-    warn_id = len(user_warns[target.id]) + 1
-    user_warns[target.id].append({
-        "id": warn_id,
-        "reason": reason,
-        "mod": message.from_user.full_name,
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M")
-    })
-    
-    await message.answer(f"Warned {target.mention}\nReason: {reason}\nTotal warns: {len(user_warns[target.id])}")
-    
-    if len(user_warns[target.id]) >= 3:
-        await message.answer(f"{target.mention} has 3 warns! Consider mute or ban.")
-
-
-@dp.message(Command("warns"))
-async def warns_cmd(message: Message):
-    if not message.reply_to_message:
-        return await message.answer("Reply to a user message!")
-    
-    target = message.reply_to_message.from_user
-    
-    if not has_perm(message.from_user.id, "view_warns"):
-        return await message.answer("You don't have permission to view warns!")
-    
-    warns = user_warns.get(target.id, [])
-    if not warns:
-        return await message.answer(f"{target.mention} has no warns")
-    
-    text = f"Warns for {target.mention}:\n"
-    for w in warns:
-        text += f"#{w['id']} - {w['reason']} (by {w['mod']} on {w['date']})\n"
-    
-    await message.answer(text[:4000])
-
-
-@dp.message(Command("setrank"))
-async def setrank_cmd(message: Message):
-    args = message.text.split()
-    if len(args) < 3:
-        return await message.answer("Usage: !setrank @user 1-5")
-    
-    mod_id = message.from_user.id
-    
-    if not message.reply_to_message:
-        return await message.answer("Reply to a user message!")
-    
-    target = message.reply_to_message.from_user
-    
-    try:
-        new_rank = int(args[2])
-        if new_rank < 1 or new_rank > 5:
-            return await message.answer("Rank must be 1-5")
+        new_rank = int(context.args[0])
+        if new_rank < 0 or new_rank > 10:
+            await update.message.reply_text("❌ Rank must be between 0 and 10")
+            return
+        
+        target = update.message.reply_to_message.from_user
+        set_rank(target.id, new_rank)
+        
+        rank_names = {0: "banned", 1: "user", 5: "moderator", 10: "admin"}
+        await update.message.reply_text(f"✅ {target.first_name} rank changed to {rank_names.get(new_rank, new_rank)}")
     except ValueError:
-        return await message.answer("Rank must be a number 1-5")
+        await update.message.reply_text("❌ Rank must be a number")
+
+async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Warn user"""
+    if not update.message.reply_to_message:
+        await update.message.reply_text("❌ Reply to the user's message")
+        return
     
-    if not has_perm(mod_id, "promote", new_rank):
-        return await message.answer(f"You cannot set rank {new_rank}")
+    caller_id = update.effective_user.id
+    if not has_permission(caller_id, 5):
+        await update.message.reply_text("❌ You don't have permission")
+        return
     
-    if target.id in OWNER_IDS and mod_id not in OWNER_IDS:
-        return await message.answer("Cannot change owner rank")
+    target = update.message.reply_to_message.from_user
     
-    user_ranks[target.id] = new_rank
-    await message.answer(f"Set rank {new_rank} for {target.mention}")
+    if not hasattr(context.chat_data, 'warnings'):
+        context.chat_data['warnings'] = {}
+    
+    warnings = context.chat_data['warnings'].get(target.id, 0) + 1
+    context.chat_data['warnings'][target.id] = warnings
+    
+    await update.message.reply_text(f"⚠️ {target.first_name} received a warning ({warnings}/3)")
+    
+    if warnings >= 3:
+        await mute(update, context)
 
-
-@dp.message(Command("rank"))
-async def rank_cmd(message: Message):
-    target = message.reply_to_message.from_user if message.reply_to_message else message.from_user
-    rank = get_rank(target.id)
-    await message.answer(f"{target.mention} rank: {rank if rank > 0 else '0 (User)'}")
-
-
-@dp.message(Command("clear"))
-async def clear_cmd(message: Message):
-    args = message.text.split()
-    if len(args) < 2:
-        return await message.answer("Usage: !clear 10")
+async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Clear messages !clear 10"""
+    if not context.args:
+        await update.message.reply_text("❌ Specify amount: !clear 10", parse_mode="Markdown")
+        return
+    
+    caller_id = update.effective_user.id
+    if not has_permission(caller_id, 5):
+        await update.message.reply_text("❌ You don't have permission")
+        return
     
     try:
-        count = int(args[1])
-        if count < 1 or count > 100:
-            return await message.answer("Count must be 1-100")
-    except ValueError:
-        return await message.answer("Count must be a number")
-    
-    if not has_perm(message.from_user.id, "kick"):
-        return await message.answer("No permission to delete messages")
-    
-    try:
-        deleted = await message.chat.purge(limit=count + 1)
-        msg = await message.answer(f"Deleted {len(deleted)-1} messages")
+        amount = int(context.args[0])
+        if amount > 100:
+            amount = 100
+        
+        await update.message.delete()
+        deleted = await update.message.chat.purge_messages(limit=amount)
+        msg = await update.message.reply_text(f"✅ Deleted {len(deleted)} messages")
+        
         await asyncio.sleep(3)
         await msg.delete()
     except Exception as e:
-        await message.answer(f"Error: {e}")
+        await update.message.reply_text(f"❌ Error: {str(e)}")
 
+# ========== MAIN ==========
+def main():
+    if not BOT_TOKEN:
+        print("ERROR: BOT_TOKEN is not set!")
+        return
+    
+    print("Starting bot...")
+    
+    app = Application.builder().token(BOT_TOKEN).build()
+    
+    # Commands
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("info", info))
+    
+    # Commands with ! prefix
+    app.add_handler(MessageHandler(filters.Regex(r'^!mute\b'), mute))
+    app.add_handler(MessageHandler(filters.Regex(r'^!unmute\b'), unmute))
+    app.add_handler(MessageHandler(filters.Regex(r'^!ban\b'), ban))
+    app.add_handler(MessageHandler(filters.Regex(r'^!unban\b'), unban))
+    app.add_handler(MessageHandler(filters.Regex(r'^!setrank\b'), setrank))
+    app.add_handler(MessageHandler(filters.Regex(r'^!warn\b'), warn))
+    app.add_handler(MessageHandler(filters.Regex(r'^!clear\b'), clear))
+    
+    print("Bot is running and ready!")
+    app.run_polling()
 
-# --- ЗАПУСК (ВАЖНО ДЛЯ RENDER.COM) ---
-async def main():
-    print("Bot started! Polling for updates...")
-    await dp.start_polling(bot)
-    if name == "main":
-    asyncio.run(main())
+if name == "main":
+    main()
