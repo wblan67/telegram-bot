@@ -241,8 +241,8 @@ async def close_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔒 *Чат закрыт!*\nПисать могут только администраторы.", parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
-        async def open_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """+чат - открыть чат для всех"""
+ async def open_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+     """ +чат - открыть чат для всех """
     chat_id = update.effective_chat.id
     caller_id = update.effective_user.id
     
