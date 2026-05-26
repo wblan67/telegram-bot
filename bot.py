@@ -13,7 +13,7 @@ from telegram.ext import (
 )
 
 # ========== КОНФИГУРАЦИЯ ==========
-TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "ВАШ_TELEGRAM_BOT_TOKEN")
+TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 PORT = int(os.environ.get("PORT", 8080))
 
 # ID владельцев (формат: "123456789,987654321")
@@ -641,6 +641,13 @@ async def filter_locked_chat(update: Update, context: CallbackContext):
 
 # ========== ЗАПУСК БОТА ==========
 def main():
+    # Проверяем, есть ли токен
+    if not TOKEN:
+        print("❌ ОШИБКА: Не указан TELEGRAM_BOT_TOKEN в переменных окружения!")
+        return
+    
+    print(f"🤖 Запуск бота с токеном: {TOKEN[:15]}...")
+    
     # Создаем приложение
     application = Application.builder().token(TOKEN).build()
     
@@ -670,8 +677,9 @@ def main():
     # Фильтр для закрытого чата
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, filter_locked_chat), group=0)
     
-    # ЗАПУСКАЕМ В РЕЖИМЕ LONG POLLING (ВСЕГДА)
-    print("🤖 Бот запущен и работает в режиме Long Polling...")
+    # ЗАПУСК В РЕЖИМЕ LONG POLLING
+    print("✅ Бот успешно запущен и работает в режиме Long Polling!")
+    print("📡 Ожидание команд от Telegram...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
