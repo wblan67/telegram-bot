@@ -14,7 +14,7 @@ from telegram.ext import (
 
 # ========== CONFIG ==========
 BOT_TOKEN = os.getenv("8944720190:AAEiEGzRnvHZtwaWepB0BLNCKIKRI4Io5WQ")
-OWNER_IDS = [int(os.getenv("6034090849"))] if os.getenv("OWNER_ID") else []
+OWNER_ID = [int(os.getenv("6034090849"))] if os.getenv("OWNER_ID") else []
 
 # User ranks (0=banned, 1=user, 5=moderator, 10=admin)
 user_ranks: Dict[int, int] = {}
