@@ -13,7 +13,7 @@ from telegram.ext import (
 )
 
 # ========== CONFIG ==========
-BOT_TOKEN = os.getenv("8944720190:AAEiEGzRnvHZtwaWepB0BLNCKIKRI4Io5WQ")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_IDS = [int(os.getenv("OWNER_ID"))] if os.getenv("OWNER_ID") else []
 
 # User ranks (0=banned, 1=user, 5=moderator, 10=admin)
