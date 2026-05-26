@@ -83,14 +83,14 @@ def parse_time(time_str: str) -> Optional[timedelta]:
     """Преобразует 5м, 2ч, 3д, 1н, 1г в timedelta"""
     if not time_str:
         return None
-    
+
     match = re.match(r'(\d+)([мчднг])', time_str.lower())
     if not match:
         return None
-    
+
     value = int(match.group(1))
     unit = match.group(2)
-    
+
     if unit == 'м':
         return timedelta(minutes=value)
     elif unit == 'ч':
@@ -109,7 +109,7 @@ def format_duration(delta: timedelta) -> str:
     days = delta.days
     hours = delta.seconds // 3600
     minutes = (delta.seconds % 3600) // 60
-    
+
     if days >= 365:
         years = days // 365
         return f"{years} г"
@@ -174,7 +174,7 @@ async def info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Информация о пользователе"""
     user = update.effective_user
     rank = get_rank(user.id)
-    
+
     await update.message.reply_text(
         f"📋 *Информация о пользователе*\n\n"
         f"ID: {user.id}\n"
@@ -196,26 +196,26 @@ async def my_rank(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def list_moders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Список всех модераторов и админов"""
     members = await get_members_list(update)
-    
+
     if not members:
         await update.message.reply_text("📋 В этом чате нет назначенных модераторов или админов.")
         return
-    
+
     admins = []
     moderators = []
-    
+
     for _, name, rank in members:
         if rank >= 10:
             admins.append(f"👑 {name}")
         elif rank >= 1:
             moderators.append(f"{RANK_NAMES.get(rank, 'Модератор')} {name}")
-    
+
     text = "📋 *Список модераторов и админов:*\n\n"
     if admins:
         text += "*Администраторы:*\n" + "\n".join(admins) + "\n\n"
     if moderators:
         text += "*Модераторы:*\n" + "\n".join(moderators)
-    
+
     await update.message.reply_text(text, parse_mode="Markdown")
 
 # ========== УПРАВЛЕНИЕ ЧАТОМ ==========
@@ -223,11 +223,11 @@ async def close_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """-чат - закрыть чат для всех, кроме админов"""
     chat_id = update.effective_chat.id
     caller_id = update.effective_user.id
-    
+
     if not has_permission(caller_id, 10):
         await update.message.reply_text("❌ Только администраторы могут закрывать чат")
         return
-    
+
     try:
         await update.message.chat.set_permissions(
             ChatPermissions(
@@ -241,15 +241,15 @@ async def close_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔒 *Чат закрыт!*\nПисать могут только администраторы.", parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
- async def open_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-     """ +чат - открыть чат для всех """
+
+async def open_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """+чат - открыть чат для всех"""
     chat_id = update.effective_chat.id
     caller_id = update.effective_user.id
-    
     if not has_permission(caller_id, 10):
         await update.message.reply_text("❌ Только администраторы могут открывать чат")
         return
-    
+
     try:
         await update.message.chat.set_permissions(
             ChatPermissions(
@@ -269,13 +269,13 @@ async def chat_lock_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Проверка, может ли пользователь писать в закрытом чате"""
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
-    
+
     if not chat_locked.get(chat_id, False):
         return True
-    
+
     if has_permission(user_id, 1):
         return True
-    
+
     await update.message.delete()
     await update.message.reply_text("🔒 Чат закрыт. Писать могут только модераторы и администраторы.")
     return False
@@ -286,11 +286,11 @@ async def add_moder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
         await update.message.reply_text("❌ Ответьте на сообщение пользователя, которому хотите назначить модератора")
         return
-    
+
     if not context.args:
         await update.message.reply_text("❌ Укажите уровень модератора: +модер 3 (1-5)", parse_mode="Markdown")
         return
-    
+
     try:
         level = int(context.args[0])
         if level < 1 or level > 5:
@@ -299,18 +299,18 @@ async def add_moder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await update.message.reply_text("❌ Уровень должен быть числом: +модер 3", parse_mode="Markdown")
         return
-    
+
     caller_id = update.effective_user.id
     if not can_assign_rank(caller_id, level):
         await update.message.reply_text("❌ У вас нет прав назначить модератора этого уровня")
         return
-    
+
     target = update.message.reply_to_message.from_user
-    
+
     if get_rank(target.id) >= 10:
         await update.message.reply_text("❌ Нельзя изменить ранг администратора")
         return
-    
+
     set_rank(target.id, level)
     await update.message.reply_text(f"✅ {target.first_name} назначен {get_rank_name(level)}")
 
@@ -319,23 +319,23 @@ async def remove_moder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
         await update.message.reply_text("❌ Ответьте на сообщение пользователя, у которого хотите снять модерацию")
         return
-    
+
     caller_id = update.effective_user.id
     target = update.message.reply_to_message.from_user
     target_rank = get_rank(target.id)
-    
+
     if target_rank == 0:
         await update.message.reply_text("❌ У этого пользователя нет модерации")
         return
-    
+
     if target_rank >= 10:
         await update.message.reply_text("❌ Нельзя снять модерацию с администратора")
         return
-    
+
     if not can_assign_rank(caller_id, 0) and not has_permission(caller_id, 10):
         await update.message.reply_text("❌ У вас нет прав снимать модерацию")
         return
-    
+
     set_rank(target.id, 0)
     await update.message.reply_text(f"✅ У {target.first_name} снята модерация")
 
@@ -344,13 +344,12 @@ async def add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
         await update.message.reply_text("❌ Ответьте на сообщение пользователя, которому хотите назначить админа")
         return
-    
+
     caller_id = update.effective_user.id
     if not is_owner(caller_id):
         await update.message.reply_text("❌ Только владелец бота может назначать администраторов")
         return
-    
-    target = update.message.reply_to_message.from_user
+        target = update.message.reply_to_message.from_user
     set_rank(target.id, 10)
     await update.message.reply_text(f"✅ {target.first_name} назначен администратором")
 
@@ -359,12 +358,12 @@ async def remove_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
         await update.message.reply_text("❌ Ответьте на сообщение пользователя, у которого хотите снять админа")
         return
-    
+
     caller_id = update.effective_user.id
     if not is_owner(caller_id):
         await update.message.reply_text("❌ Только владелец бота может снимать администраторов")
         return
-    
+
     target = update.message.reply_to_message.from_user
     set_rank(target.id, 0)
     await update.message.reply_text(f"✅ У {target.first_name} снят статус администратора")
@@ -374,7 +373,7 @@ async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Замутить пользователя"""
     target = None
     time_str = None
-    
+
     if update.message.reply_to_message:
         target = update.message.reply_to_message.from_user
         if context.args:
@@ -382,21 +381,21 @@ async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ Ответьте на сообщение пользователя, которого хотите замутить")
         return
-    
+
     if not target:
         await update.message.reply_text("❌ Ответьте на сообщение пользователя")
         return
-    
+
     caller_id = update.effective_user.id
     if not has_permission(caller_id, 1):
         await update.message.reply_text("❌ У вас нет прав на мут")
         return
-    
+
     duration = parse_time(time_str) if time_str else timedelta(minutes=5)
     if not duration and time_str:
         await update.message.reply_text("❌ Неверный формат времени. Примеры: мут 5м, мут 2ч", parse_mode="Markdown")
         return
-    
+
     try:
         until_date = datetime.now() + duration
         await update.message.chat.restrict_member(
@@ -404,7 +403,7 @@ async def mute(update: Update, context: ContextTypes.DEFAULT_TYPE):
             permissions=ChatPermissions(can_send_messages=False),
             until_date=until_date
         )
-        
+
         mute_timers[target.id] = until_date
         duration_str = format_duration(duration)
         await update.message.reply_text(f"🔇 {target.first_name} замучен на {duration_str}")
@@ -416,14 +415,14 @@ async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
         await update.message.reply_text("❌ Ответьте на сообщение пользователя")
         return
-    
+
     caller_id = update.effective_user.id
     if not has_permission(caller_id, 1):
         await update.message.reply_text("❌ У вас нет прав")
         return
-    
+
     target = update.message.reply_to_message.from_user
-    
+
     try:
         await update.message.chat.restrict_member(
             user_id=target.id,
@@ -434,44 +433,44 @@ async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 can_add_web_page_previews=True
             )
         )
-        
+
         if target.id in mute_timers:
             del mute_timers[target.id]
-        
+
         await update.message.reply_text(f"🔊 {target.first_name} размучен")
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
-        async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Забанить"""
     if not update.message.reply_to_message:
         await update.message.reply_text("❌ Ответьте на сообщение пользователя")
         return
-    
+
     caller_id = update.effective_user.id
     if not has_permission(caller_id, 1):
         await update.message.reply_text("❌ У вас нет прав")
         return
-    
+
     target = update.message.reply_to_message.from_user
-    
+
     try:
         await update.message.chat.ban_member(user_id=target.id)
         set_rank(target.id, 0)
         await update.message.reply_text(f"⛔ {target.first_name} забанен")
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
-
-async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        async def unban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Разбанить по ID"""
     if not context.args:
         await update.message.reply_text("❌ Укажите ID пользователя: разбан 123456789", parse_mode="Markdown")
         return
-    
+
     caller_id = update.effective_user.id
     if not has_permission(caller_id, 1):
         await update.message.reply_text("❌ У вас нет прав")
         return
-    
+
     try:
         user_id = int(context.args[0])
         await update.message.chat.unban_member(user_id=user_id)
@@ -486,22 +485,22 @@ async def warn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
         await update.message.reply_text("❌ Ответьте на сообщение пользователя")
         return
-    
+
     caller_id = update.effective_user.id
     if not has_permission(caller_id, 1):
         await update.message.reply_text("❌ У вас нет прав")
         return
-    
+
     target = update.message.reply_to_message.from_user
-    
+
     if not hasattr(context.chat_data, 'warnings'):
         context.chat_data['warnings'] = {}
-    
+
     warnings = context.chat_data['warnings'].get(target.id, 0) + 1
     context.chat_data['warnings'][target.id] = warnings
-    
+
     await update.message.reply_text(f"⚠️ {target.first_name} получил предупреждение ({warnings}/3)")
-    
+
     if warnings >= 3:
         context.chat_data['warnings'][target.id] = 0
         await mute(update, context)
@@ -511,21 +510,21 @@ async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("❌ Укажите количество: очисти 10", parse_mode="Markdown")
         return
-    
+
     caller_id = update.effective_user.id
     if not has_permission(caller_id, 1):
         await update.message.reply_text("❌ У вас нет прав")
         return
-    
+
     try:
         amount = int(context.args[0])
         if amount > 100:
             amount = 100
-        
+
         await update.message.delete()
         deleted = await update.message.chat.purge_messages(limit=amount)
         msg = await update.message.reply_text(f"✅ Удалено {len(deleted)} сообщений")
-        
+
         await asyncio.sleep(3)
         await msg.delete()
     except Exception as e:
@@ -536,28 +535,28 @@ def main():
     if not BOT_TOKEN:
         print("ОШИБКА: BOT_TOKEN не задан!")
         return
-    
+
     print("Бот запускается...")
-    
+
     app = Application.builder().token(BOT_TOKEN).build()
-    
+
     # Команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("помощь", help_command))
     app.add_handler(CommandHandler("инфо", info))
     app.add_handler(CommandHandler("мой ранг", my_rank))
     app.add_handler(CommandHandler("кто модеры", list_moders))
-    
+
     # Управление чатом
     app.add_handler(MessageHandler(filters.Regex(r'^-\s*чат\b'), close_chat))
     app.add_handler(MessageHandler(filters.Regex(r'^\+\s*чат\b'), open_chat))
-    
+
     # Назначение ролей
     app.add_handler(MessageHandler(filters.Regex(r'^\+модер\b'), add_moder))
     app.add_handler(MessageHandler(filters.Regex(r'^-модер\b'), remove_moder))
     app.add_handler(MessageHandler(filters.Regex(r'^\+админ\b'), add_admin))
     app.add_handler(MessageHandler(filters.Regex(r'^-админ\b'), remove_admin))
-    
+
     # Модерация
     app.add_handler(MessageHandler(filters.Regex(r'^мут\b'), mute))
     app.add_handler(MessageHandler(filters.Regex(r'^размут\b'), unmute))
@@ -565,10 +564,9 @@ def main():
     app.add_handler(MessageHandler(filters.Regex(r'^разбан\b'), unban))
     app.add_handler(MessageHandler(filters.Regex(r'^варн\b'), warn))
     app.add_handler(MessageHandler(filters.Regex(r'^очисти\b'), clear))
-    
+
     # Фильтр для закрытого чата
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_lock_filter), group=0)
-    
     print("Бот запущен и готов к работе!")
     app.run_polling()
 
