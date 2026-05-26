@@ -6,11 +6,11 @@ from typing import Dict, Optional, List, Tuple
 
 from telegram import Update, ChatPermissions
 from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    filters,
-    ContextTypes,
+    Application,
+    CommandHandler,
+    MessageHandler,
+    filters,
+    ContextTypes,
 )
 
 # ========== КОНФИГ ==========
