@@ -318,5 +318,5 @@ def main():
     print("Bot is running and ready!")
     app.run_polling()
 
-if name == "main":
+if __name__ == "__main__":
     main()
