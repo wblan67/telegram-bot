@@ -644,7 +644,7 @@ def main():
     # Создаем приложение
     application = Application.builder().token(TOKEN).build()
     
-    # Команды модерации (АНГЛИЙСКИЕ)
+    # Команды модерации
     application.add_handler(CommandHandler("mute", cmd_mute))
     application.add_handler(CommandHandler("unmute", cmd_unmute))
     application.add_handler(CommandHandler("ban", cmd_ban))
@@ -652,17 +652,17 @@ def main():
     application.add_handler(CommandHandler("warn", cmd_warn))
     application.add_handler(CommandHandler("clear", cmd_clear))
     
-    # Отдельные обработчики для +чат и -чат (текстовые сообщения)
+    # Отдельные обработчики для +чат и -чат
     application.add_handler(MessageHandler(filters.Regex(r'^\-чат$'), cmd_lock_chat))
     application.add_handler(MessageHandler(filters.Regex(r'^\+чат$'), cmd_unlock_chat))
     
-    # Назначение ролей (текстовые сообщения)
+    # Назначение ролей
     application.add_handler(MessageHandler(filters.Regex(r'^\+модер\s+\d+$'), cmd_add_moder))
     application.add_handler(MessageHandler(filters.Regex(r'^\-модер$'), cmd_remove_moder))
     application.add_handler(MessageHandler(filters.Regex(r'^\+админ$'), cmd_add_admin))
     application.add_handler(MessageHandler(filters.Regex(r'^\-админ$'), cmd_remove_admin))
     
-    # Просмотр информации (английские команды)
+    # Просмотр информации
     application.add_handler(CommandHandler("moders", cmd_moder_list))
     application.add_handler(CommandHandler("rank", cmd_my_rank))
     application.add_handler(CommandHandler("info", cmd_info))
@@ -670,23 +670,9 @@ def main():
     # Фильтр для закрытого чата
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, filter_locked_chat), group=0)
     
-    # Запуск через Webhook (для Render) или Polling (для локальной разработки)
-    webhook_url = os.environ.get("RENDER_EXTERNAL_URL")
-    
-    if webhook_url:
-        # Режим Webhook (для продакшена на Render)
-        webhook_path = f"/webhook/{TOKEN}"
-        print(f"Запуск в режиме Webhook на порту {PORT}")
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path=webhook_path,
-            webhook_url=f"{webhook_url}{webhook_path}"
-        )
-    else:
-        # Режим Polling (для локальной разработки)
-        print("Запуск в режиме polling...")
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # ЗАПУСКАЕМ В РЕЖИМЕ LONG POLLING (ВСЕГДА)
+    print("🤖 Бот запущен и работает в режиме Long Polling...")
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
